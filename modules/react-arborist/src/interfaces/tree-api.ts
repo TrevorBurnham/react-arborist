@@ -38,6 +38,8 @@ export class TreeApi<T> {
   idToIndex: { [id: string]: number };
   /* Memoized prefix-sum of row heights; only used for variable heights. */
   private rowOffsets: number[] | null = null;
+  /* Notified when redrawList() invalidates the row heights. */
+  private redrawListeners = new Set<() => void>();
   /* Height resolved by the container, in pixels. Null until it renders — a
      custom renderContainer never sets it, so the height getter falls back to
      the prop. */
@@ -174,7 +176,20 @@ export class TreeApi<T> {
     if (list && "resetAfterIndex" in list) {
       list.resetAfterIndex(Math.max(0, afterIndex));
     }
+    this.redrawListeners.forEach((listener) => listener());
   };
+
+  /**
+   * Subscribe to redrawList(). It force-updates the list alone, so anything
+   * else that renders from the row heights — the container, when the tree is
+   * sized by its content — has to hear about it. Returns an unsubscribe.
+   */
+  onRedraw(listener: () => void) {
+    this.redrawListeners.add(listener);
+    return () => {
+      this.redrawListeners.delete(listener);
+    };
+  }
 
   /** Lazily-built prefix sum where offsets[i] is the top of row i. */
   private getRowOffsets(): number[] {

@@ -82,6 +82,7 @@ describe("resolveTreeHeight", () => {
       cssMaxHeight: undefined,
       listHeight: 300,
       needsMeasure: false,
+      sizedByContent: false,
     });
   });
 
@@ -98,6 +99,7 @@ describe("resolveTreeHeight", () => {
       cssMaxHeight: undefined,
       listHeight: 0,
       needsMeasure: true,
+      sizedByContent: false,
     });
     expect(resolveTreeHeight({ ...args, height: "100%", measured: 120 }).listHeight).toBe(120);
   });
@@ -265,4 +267,81 @@ test("a tree that measures 0px while laid out explains itself (#86)", () => {
 
   rects.mockRestore();
   warn.mockRestore();
+});
+
+test("a tree with no rows to show stays quiet (#86)", () => {
+  const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+  const rects = jest
+    .spyOn(Element.prototype, "getClientRects")
+    .mockReturnValue([{}] as unknown as DOMRectList);
+
+  /* An empty tree measures 0px because it has nothing in it, not because its
+     parent is misconfigured — data usually arrives after the first render. */
+  render(<Tree<Datum> data={[]} rowHeight={ROW_HEIGHT} height="auto" maxHeight="100%" />);
+
+  expect(warn).not.toHaveBeenCalled();
+
+  rects.mockRestore();
+  warn.mockRestore();
+});
+
+test("each misconfigured tree gets its own warning (#86)", () => {
+  const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
+  const rects = jest
+    .spyOn(Element.prototype, "getClientRects")
+    .mockReturnValue([{}] as unknown as DOMRectList);
+
+  /* Warning once per page would let the first tree to trip it silence every
+     other tree on the page. */
+  render(<Tree<Datum> data={data} rowHeight={ROW_HEIGHT} height="100%" />);
+  render(<Tree<Datum> data={data} rowHeight={ROW_HEIGHT} height="100%" />);
+
+  expect(warn).toHaveBeenCalledTimes(2);
+
+  rects.mockRestore();
+  warn.mockRestore();
+});
+
+test("a null height falls back to the default, as it always has (#86)", () => {
+  /* Not reachable from TypeScript, but `height={bounds?.height ?? null}` is
+     ordinary JS, and it used to render a 500px tree rather than nothing. */
+  const ref = createRef<TreeApi<Datum> | undefined>();
+  render(<Tree<Datum> ref={ref} data={data} rowHeight={ROW_HEIGHT} height={null as any} />);
+
+  expect(ref.current?.height).toBe(500);
+});
+
+test("a null maxHeight does not imply auto (#86)", () => {
+  const ref = createRef<TreeApi<Datum> | undefined>();
+  render(<Tree<Datum> ref={ref} data={data} rowHeight={ROW_HEIGHT} maxHeight={null as any} />);
+
+  expect(ref.current?.height).toBe(500);
+});
+
+test("redrawList resizes a tree sized by its rows (#86)", async () => {
+  let tall = false;
+  const ref = createRef<TreeApi<Datum> | undefined>();
+  render(<Tree<Datum> ref={ref} data={data} height="auto" rowHeight={() => (tall ? 48 : 24)} />);
+  expect(screen.getByRole("tree").style.height).toBe(`${data.length * 24}px`);
+
+  /* The rowHeight function's output changed for a reason the tree can't see,
+     which is exactly what redrawList is for. */
+  tall = true;
+  await act(async () => {
+    ref.current?.redrawList();
+  });
+
+  expect(screen.getByRole("tree").style.height).toBe(`${data.length * 48}px`);
+});
+
+test("a fixed-height tree ignores redraws (#86)", async () => {
+  const ref = createRef<TreeApi<Datum> | undefined>();
+  render(<Tree<Datum> ref={ref} data={data} height={300} rowHeight={() => 24} />);
+
+  await act(async () => {
+    ref.current?.redrawList();
+  });
+
+  expect(ref.current?.height).toBe(300);
+  expect(screen.getByRole("tree").style.height).toBe("300px");
 });

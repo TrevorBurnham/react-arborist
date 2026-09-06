@@ -1,4 +1,4 @@
-import { MutableRefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { MutableRefObject, useEffect, useLayoutEffect, useReducer, useRef, useState } from "react";
 /* Type-only: tree-api imports DEFAULT_HEIGHT from here, so keep this module
    free of a runtime dependency back on it. */
 import type { TreeApi } from "../interfaces/tree-api";
@@ -15,6 +15,9 @@ export type HeightPlan = {
   listHeight: number;
   /** Whether the element has to be measured to know its pixel height. */
   needsMeasure: boolean;
+  /** Whether the element's height comes from the rows, so changing row heights
+      changes it. */
+  sizedByContent: boolean;
 };
 
 type Args = {
@@ -40,22 +43,23 @@ export function resolveTreeHeight({
   measured,
 }: Args): HeightPlan {
   /* "auto" means "as tall as the rows"; a bare maxHeight implies it, since a
-     tree that is always DEFAULT_HEIGHT tall would ignore the cap. */
-  const isAuto = height === "auto" || (height === undefined && maxHeight !== undefined);
+     tree that is always DEFAULT_HEIGHT tall would ignore the cap. Null counts
+     as absent, the way the height prop has always treated it. */
+  const isAuto = height === "auto" || (height == null && maxHeight != null);
   /* The height the tree asks for, before any cap. Null when only the browser
      can resolve it. */
   const requested = isAuto
     ? contentHeight
     : typeof height === "number"
       ? height
-      : height === undefined
+      : height == null
         ? DEFAULT_HEIGHT
         : null;
   const needsMeasure = requested === null || typeof maxHeight === "string";
   const cap = typeof maxHeight === "number" ? maxHeight : Infinity;
   return {
     cssHeight: requested === null ? (height as string) : requested,
-    cssMaxHeight: maxHeight,
+    cssMaxHeight: maxHeight ?? undefined,
     /* Before the first measurement the list has no height to fill, so it
        mounts nothing beyond react-window's minimum row. That lasts one
        pre-paint render, and beats guessing a height and mounting every row of
@@ -63,6 +67,7 @@ export function resolveTreeHeight({
        list, so measuring it is never circular. */
     listHeight: needsMeasure ? (measured ?? 0) : Math.min(requested as number, cap),
     needsMeasure,
+    sizedByContent: isAuto,
   };
 }
 
@@ -80,6 +85,8 @@ export function useTreeHeight<T>(tree: TreeApi<T>): {
 } {
   const ref = useRef<HTMLDivElement | null>(null);
   const [measured, setMeasured] = useState<number | null>(null);
+  const warned = useRef(false);
+  const [, redrawn] = useReducer((count: number) => count + 1, 0);
   const plan = resolveTreeHeight({
     height: tree.props.height,
     maxHeight: tree.props.maxHeight,
@@ -105,29 +112,46 @@ export function useTreeHeight<T>(tree: TreeApi<T>): {
     /* Measure in a layout effect so the corrected height paints in the same
        frame the tree mounts in; the observer only reports later changes. */
     read();
-    warnAboutZeroHeight(el);
+    if (!warned.current && isMisconfigured(el, tree.contentHeight)) {
+      warned.current = true;
+      warnAboutZeroHeight();
+    }
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(read);
     observer.observe(el);
     return () => observer.disconnect();
   }, [needsMeasure, cssHeight, cssMaxHeight]);
 
+  /* A tree sized by its rows has to re-render when the row heights change out
+     from under it, which is what redrawList() announces. Nothing else does:
+     redrawList only force-updates the list itself. */
+  useEffect(() => {
+    if (!plan.sizedByContent) return;
+    return tree.onRedraw(redrawn);
+  }, [tree, plan.sizedByContent]);
+
   return { ref, plan };
 }
 
-let warnedAboutZeroHeight = false;
+/**
+ * Whether a tree that measured zero has a real problem to report. A tree with
+ * no rows is legitimately empty, and one that isn't laid out at all
+ * (display: none, an unopened tab) has no client rects and no height yet.
+ * What's left is a tree with rows, on the page, that still has nowhere to draw
+ * them.
+ */
+function isMisconfigured(el: HTMLElement, contentHeight: number) {
+  if (contentHeight === 0) return false;
+  return el.clientHeight === 0 && el.getClientRects().length > 0;
+}
 
 /**
  * A percentage height resolves to zero unless the parent has a definite
- * height, which is the usual reason an auto-sized tree renders nothing. Say so
- * once rather than leaving an empty box. Elements that aren't laid out at all
- * (display: none, an unopened tab) legitimately measure zero, and getClientRects
- * is empty for those.
+ * height, which is the usual reason a self-sizing tree renders nothing. Say so
+ * rather than leaving an empty box. Warned at most once per tree, so one
+ * misconfigured tree never silences the diagnostic for another.
  */
-function warnAboutZeroHeight(el: HTMLElement) {
-  if (warnedAboutZeroHeight) return;
-  if (el.clientHeight !== 0 || el.getClientRects().length === 0) return;
-  warnedAboutZeroHeight = true;
+function warnAboutZeroHeight() {
   console.warn(
     `React Arborist Tree => The tree measured 0px tall, so no rows will render. ` +
       `A percentage height needs a parent with a definite height: give the parent a ` +
