@@ -252,56 +252,6 @@ test("the tree still renders when ResizeObserver is missing (#86)", () => {
   expect(rowCount()).toBeGreaterThan(0);
 });
 
-test("a tree that measures 0px while laid out explains itself (#86)", () => {
-  const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
-  /* jsdom reports no client rects for anything; pretend the element is laid
-     out, so a 0px measurement means the parent had no definite height. */
-  const rects = jest
-    .spyOn(Element.prototype, "getClientRects")
-    .mockReturnValue([{}] as unknown as DOMRectList);
-
-  renderTree({ height: "100%" });
-
-  expect(warn).toHaveBeenCalledTimes(1);
-  expect(warn.mock.calls[0][0]).toMatch(/measured 0px tall/);
-
-  rects.mockRestore();
-  warn.mockRestore();
-});
-
-test("a tree with no rows to show stays quiet (#86)", () => {
-  const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
-  const rects = jest
-    .spyOn(Element.prototype, "getClientRects")
-    .mockReturnValue([{}] as unknown as DOMRectList);
-
-  /* An empty tree measures 0px because it has nothing in it, not because its
-     parent is misconfigured — data usually arrives after the first render. */
-  render(<Tree<Datum> data={[]} rowHeight={ROW_HEIGHT} height="auto" maxHeight="100%" />);
-
-  expect(warn).not.toHaveBeenCalled();
-
-  rects.mockRestore();
-  warn.mockRestore();
-});
-
-test("each misconfigured tree gets its own warning (#86)", () => {
-  const warn = jest.spyOn(console, "warn").mockImplementation(() => {});
-  const rects = jest
-    .spyOn(Element.prototype, "getClientRects")
-    .mockReturnValue([{}] as unknown as DOMRectList);
-
-  /* Warning once per page would let the first tree to trip it silence every
-     other tree on the page. */
-  render(<Tree<Datum> data={data} rowHeight={ROW_HEIGHT} height="100%" />);
-  render(<Tree<Datum> data={data} rowHeight={ROW_HEIGHT} height="100%" />);
-
-  expect(warn).toHaveBeenCalledTimes(2);
-
-  rects.mockRestore();
-  warn.mockRestore();
-});
-
 test("a null height falls back to the default, as it always has (#86)", () => {
   /* Not reachable from TypeScript, but `height={bounds?.height ?? null}` is
      ordinary JS, and it used to render a 500px tree rather than nothing. */
@@ -344,4 +294,43 @@ test("a fixed-height tree ignores redraws (#86)", async () => {
 
   expect(ref.current?.height).toBe(300);
   expect(screen.getByRole("tree").style.height).toBe("300px");
+});
+
+test("a bare numeric string height is read as pixels (#86)", () => {
+  /* "400" is not valid CSS: the browser drops it and the tree ends up with no
+     height at all. It is what a config value or String(n) hands you, though. */
+  const ref = createRef<TreeApi<Datum> | undefined>();
+  render(<Tree<Datum> ref={ref} data={data} rowHeight={ROW_HEIGHT} height={"400" as any} />);
+
+  expect(FakeResizeObserver.constructed).toBe(0);
+  expect(ref.current?.height).toBe(400);
+  expect(screen.getByRole("tree").style.height).toBe("400px");
+  expect(rowCount()).toBeGreaterThan(0);
+});
+
+test("a bare numeric string maxHeight caps without measuring (#86)", () => {
+  const ref = createRef<TreeApi<Datum> | undefined>();
+  render(
+    <Tree<Datum>
+      ref={ref}
+      data={data}
+      rowHeight={ROW_HEIGHT}
+      height="auto"
+      maxHeight={"100" as any}
+    />,
+  );
+
+  expect(FakeResizeObserver.constructed).toBe(0);
+  expect(ref.current?.height).toBe(100);
+  expect(screen.getByRole("tree").style.maxHeight).toBe("100px");
+});
+
+test("a real CSS length keeps its units and is measured (#86)", async () => {
+  const ref = createRef<TreeApi<Datum> | undefined>();
+  render(<Tree<Datum> ref={ref} data={data} rowHeight={ROW_HEIGHT} height="400px" />);
+
+  expect(screen.getByRole("tree").style.height).toBe("400px");
+  await resizeTo(400);
+
+  expect(ref.current?.height).toBe(400);
 });

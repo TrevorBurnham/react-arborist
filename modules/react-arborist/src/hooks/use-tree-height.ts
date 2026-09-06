@@ -36,12 +36,10 @@ type Args = {
  * element and come back through a ResizeObserver; everything else is computed
  * here so the common numeric-height tree never measures anything.
  */
-export function resolveTreeHeight({
-  height,
-  maxHeight,
-  contentHeight,
-  measured,
-}: Args): HeightPlan {
+export function resolveTreeHeight(args: Args): HeightPlan {
+  const { contentHeight, measured } = args;
+  const height = asPixels(args.height);
+  const maxHeight = asPixels(args.maxHeight);
   /* "auto" means "as tall as the rows"; a bare maxHeight implies it, since a
      tree that is always DEFAULT_HEIGHT tall would ignore the cap. Null counts
      as absent, the way the height prop has always treated it. */
@@ -85,7 +83,6 @@ export function useTreeHeight<T>(tree: TreeApi<T>): {
 } {
   const ref = useRef<HTMLDivElement | null>(null);
   const [measured, setMeasured] = useState<number | null>(null);
-  const warned = useRef(false);
   const [, redrawn] = useReducer((count: number) => count + 1, 0);
   const plan = resolveTreeHeight({
     height: tree.props.height,
@@ -112,10 +109,6 @@ export function useTreeHeight<T>(tree: TreeApi<T>): {
     /* Measure in a layout effect so the corrected height paints in the same
        frame the tree mounts in; the observer only reports later changes. */
     read();
-    if (!warned.current && isMisconfigured(el, tree.contentHeight)) {
-      warned.current = true;
-      warnAboutZeroHeight();
-    }
     if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver(read);
     observer.observe(el);
@@ -134,28 +127,13 @@ export function useTreeHeight<T>(tree: TreeApi<T>): {
 }
 
 /**
- * Whether a tree that measured zero has a real problem to report. A tree with
- * no rows is legitimately empty, and one that isn't laid out at all
- * (display: none, an unopened tab) has no client rects and no height yet.
- * What's left is a tree with rows, on the page, that still has nowhere to draw
- * them.
+ * A number of pixels, whether it arrived as a number or as a bare numeric
+ * string. "400" is not valid CSS — the browser drops it, leaving the tree with
+ * no height at all — but it is what a config value, a query param or String(n)
+ * hands you, so read it as pixels rather than as a CSS value.
  */
-function isMisconfigured(el: HTMLElement, contentHeight: number) {
-  if (contentHeight === 0) return false;
-  return el.clientHeight === 0 && el.getClientRects().length > 0;
-}
-
-/**
- * A percentage height resolves to zero unless the parent has a definite
- * height, which is the usual reason a self-sizing tree renders nothing. Say so
- * rather than leaving an empty box. Warned at most once per tree, so one
- * misconfigured tree never silences the diagnostic for another.
- */
-function warnAboutZeroHeight() {
-  console.warn(
-    `React Arborist Tree => The tree measured 0px tall, so no rows will render. ` +
-      `A percentage height needs a parent with a definite height: give the parent a ` +
-      `fixed height, or "flex: 1; min-height: 0" inside a flex column. Pass a number ` +
-      `to the height prop to skip measuring.`,
-  );
+function asPixels(value: number | string | undefined | null) {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  return /^\d+(\.\d+)?$/.test(trimmed) ? Number(trimmed) : value;
 }

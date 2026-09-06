@@ -278,10 +278,10 @@ observer of your own.
 ```
 
 A percentage height only resolves when the parent has a definite height. Inside a
-flex column, that means giving the parent `flex: 1; min-height: 0`. Any CSS value
-works, so `height="50vh"` or `height="calc(100% - 2rem)"` are fine too. The tree
-warns in the console if it measures 0px, which almost always means the parent's
-height is indefinite.
+flex column, that means giving the parent `flex: 1; min-height: 0`. If a tree
+renders nothing and `tree.height` reads 0, that's the reason. Any CSS value works,
+so `height="50vh"` or `height="calc(100% - 2rem)"` are fine too — as is a bare
+number in a string, `height="400"`, which is read as pixels.
 
 Pass `"auto"` to grow the tree to fit its rows, letting the page scroll instead
 of the tree. Every visible row renders in this mode, so keep it for small trees —
